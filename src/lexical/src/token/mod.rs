@@ -1,4 +1,6 @@
-mod reader;
+mod token_reader;
+
+pub use token_reader::TokenReader;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Whitespace {

@@ -1,8 +1,7 @@
-mod simple;
-mod token;
 mod error;
+mod parser;
+mod token;
 
-pub use token::{Token, Whitespace, Word, Keyword};
-pub use simple::from_string::FromString as SimpleFromString;
-pub use simple::token_reader::TokenReader as SimpleTokenReader;
 pub use error::Result;
+pub use parser::{from_string::FromString, LexicalParser};
+pub use token::{Keyword, Token, TokenReader, Whitespace, Word};

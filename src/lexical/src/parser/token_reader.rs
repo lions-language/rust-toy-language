@@ -2,7 +2,7 @@ use crate::Token;
 
 pub struct TokenReader {
     tokens: Vec<Token>,
-    index: usize
+    index: usize,
 }
 
 impl TokenReader {
@@ -55,13 +55,13 @@ impl TokenReader {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::{SimpleFromString, SimpleTokenReader};
+    use crate::{FromString, TokenReader};
 
     #[test]
     fn token_reader_test() {
-        let mut parser = SimpleFromString::new("int a = 1;".to_string());
+        let mut parser = FromString::new("int a = 1;".to_string());
         let tokens = parser.parse().unwrap();
-        let token_reader = SimpleTokenReader::new(tokens);
+        let token_reader = TokenReader::new(tokens);
         println!("peek: {:?}", token_reader.peek());
     }
 }

@@ -3,12 +3,14 @@ use crate::{Result, Token, Whitespace};
 use std::iter::Peekable;
 use std::str::Chars;
 
+use super::LexicalParser;
+
 pub struct FromString {
     content: String,
 }
 
-impl FromString {
-    pub fn parse(&self) -> Result<Vec<Token>> {
+impl LexicalParser for FromString {
+    fn parse(&self) -> Result<Vec<Token>> {
         let mut tokens = Vec::new();
 
         let mut chars = self.content.chars().peekable();
@@ -23,7 +25,9 @@ impl FromString {
 
         Ok(tokens)
     }
+}
 
+impl FromString {
     fn next_token(&self, chars: &mut Peekable<Chars<'_>>) -> Result<Token> {
         match chars.peek() {
             Some(&ch) => match ch {
@@ -197,6 +201,7 @@ impl FromString {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::parser::LexicalParser;
 
     fn simple_from_string_test(s: impl ToString) {
         let parser = FromString::new(s.to_string());
