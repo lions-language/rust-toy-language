@@ -3,7 +3,7 @@ use crate::{Result, Token, Whitespace};
 use std::iter::Peekable;
 use std::str::Chars;
 
-use super::LexicalParser;
+use crate::LexicalParser;
 
 pub struct FromString {
     content: String,
@@ -304,5 +304,10 @@ mod test {
     #[test]
     fn simple_from_string_impl() {
         simple_from_string_test(r#"impl Dog {}"#)
+    }
+
+    #[test]
+    fn simple_from_string_self() {
+        simple_from_string_test(r#"func (self, int a)"#)
     }
 }

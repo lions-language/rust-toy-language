@@ -18,7 +18,9 @@ pub use parser::Parser;
 pub use scope::{Scope, ScopeType, SharedScope, SharedScopeOptionShower};
 pub use symbol::{Symbol, SymbolObject};
 
-pub(crate) use utils::SharedCell;
+use try_match::try_match;
+
+pub(crate) use utils::{Shared, SharedCell, Weaked};
 
 #[derive(Debug, Clone)]
 pub struct SharedAstNode(Rc<RefCell<AstNode>>);
@@ -108,6 +110,41 @@ impl fmt::Display for Value {
     }
 }
 
+pub trait Sign {
+    fn to_string(&self) -> String;
+}
+
+pub trait FunctionSign {
+    fn info<ParamItem, Params, ReturnType>(&self) -> (Params, ReturnType)
+    where
+        ParamItem: ToString,
+        Params: Iterator<Item = ParamItem>,
+        ReturnType: ToString;
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FunctionType {
+    pub param_data_types: Vec<Box<DataType>>,
+    pub return_data_type: Box<DataType>,
+    // assignment in the semantic analysis phase
+    pub func_define: Option<Weaked<FunctionDef>>,
+}
+
+impl Sign for FunctionType {
+    fn to_string(&self) -> String {
+        let mut s = String::from("(");
+        let mut c = String::from("");
+        for dt in self.param_data_types.iter() {
+            s.push_str(&c);
+            s.push_str(&dt.to_string());
+            c = ",".to_string();
+        }
+        s.push_str(&format!(")->{}", self.return_data_type.to_string()));
+
+        s
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum DataType {
     Unknown(String),
@@ -117,20 +154,43 @@ pub enum DataType {
     Long,
     Bool,
     String,
-    Struct(String),
+    Struct(Weaked<StructDef>),
+    Function(FunctionType),
 }
+
+impl Default for DataType {
+    fn default() -> Self {
+        DataType::Unknown("default".into())
+    }
+}
+
+// impl fmt::Debug for DataType {
+//     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+//         match self {
+//             v @ DataType::Unknown(_) => v.fmt(f),
+//             v @ DataType::Unit => v.fmt(f),
+//             v @ DataType::Int => v.fmt(f),
+//             v @ DataType::Double => v.fmt(f),
+//             v @ DataType::Long => v.fmt(f),
+//             v @ DataType::Bool => v.fmt(f),
+//             v @ DataType::String => v.fmt(f),
+//             DataType::Struct(sd) => f.write_fmt(format_args!("Struct({})", sd.cell().struct_name)),
+//         }
+//     }
+// }
 
 impl DataType {
     pub fn to_string(&self) -> String {
         match self {
-            DataType::Unknown(_) => "unknown".to_string(),
-            DataType::Unit => "unit".to_string(),
-            DataType::Int => "int".to_string(),
-            DataType::Double => "double".to_string(),
-            DataType::Long => "long".to_string(),
-            DataType::Bool => "bool".to_string(),
-            DataType::String => "string".to_string(),
-            DataType::Struct(name) => name.to_string(),
+            DataType::Unknown(v) => format!("Unknown({})", v),
+            DataType::Unit => "Unit".to_string(),
+            DataType::Int => "Int".to_string(),
+            DataType::Double => "Double".to_string(),
+            DataType::Long => "Long".to_string(),
+            DataType::Bool => "Bool".to_string(),
+            DataType::String => "String".to_string(),
+            DataType::Struct(s) => s.shared_unchecked().cell().struct_name.clone(),
+            DataType::Function(f) => f.to_string(),
         }
     }
 }
@@ -139,6 +199,12 @@ impl DataType {
 pub struct Ident {
     pub value: String,
 }
+
+// impl ToString for Ident {
+//     fn to_string(&self) -> Self {
+//         self.value.into()
+//     }
+// }
 
 impl Ident {
     pub fn build_format(&self, level: usize, s: &mut String) {
@@ -156,11 +222,11 @@ impl fmt::Display for Ident {
 #[educe(Debug)]
 pub struct IntdeclarationContext {
     #[educe(Debug(ignore))]
-    pub enclosing_scope: SharedScope,
+    pub enclosing_scope: Shared<Scope>,
 }
 
 impl IntdeclarationContext {
-    pub fn new(scope: SharedScope) -> Self {
+    pub fn new(scope: Shared<Scope>) -> Self {
         Self {
             enclosing_scope: scope,
         }
@@ -171,11 +237,11 @@ impl IntdeclarationContext {
 #[educe(Debug)]
 pub struct ReturnContext {
     #[educe(Debug(ignore))]
-    pub enclosing_scope: SharedScope,
+    pub enclosing_scope: Shared<Scope>,
 }
 
 impl ReturnContext {
-    pub fn new(scope: SharedScope) -> Self {
+    pub fn new(scope: Shared<Scope>) -> Self {
         Self {
             enclosing_scope: scope,
         }
@@ -186,11 +252,11 @@ impl ReturnContext {
 #[educe(Debug)]
 pub struct BreakContext {
     #[educe(Debug(ignore))]
-    pub enclosing_scope: SharedScope,
+    pub enclosing_scope: Shared<Scope>,
 }
 
 impl BreakContext {
-    pub fn new(scope: SharedScope) -> Self {
+    pub fn new(scope: Shared<Scope>) -> Self {
         Self {
             enclosing_scope: scope,
         }
@@ -201,11 +267,11 @@ impl BreakContext {
 #[educe(Debug)]
 pub struct ContinueContext {
     #[educe(Debug(ignore))]
-    pub enclosing_scope: SharedScope,
+    pub enclosing_scope: Shared<Scope>,
 }
 
 impl ContinueContext {
-    pub fn new(scope: SharedScope) -> Self {
+    pub fn new(scope: Shared<Scope>) -> Self {
         Self {
             enclosing_scope: scope,
         }
@@ -216,15 +282,15 @@ impl ContinueContext {
 #[educe(Debug)]
 pub struct BlockContext {
     #[educe(Debug(ignore))]
-    pub enclosing_scope: Option<SharedScope>,
+    pub enclosing_scope: Option<Shared<Scope>>,
 }
 
 impl BlockContext {
-    pub fn enclosing_scope(&self) -> &Option<SharedScope> {
-        &self.enclosing_scope
+    pub fn enclosing_scope(&self) -> Option<Weaked<Scope>> {
+        self.enclosing_scope.as_ref().map(|s| s.weak())
     }
 
-    pub fn new(scope: Option<SharedScope>) -> Self {
+    pub fn new(scope: Option<Shared<Scope>>) -> Self {
         Self {
             enclosing_scope: scope,
         }
@@ -235,12 +301,9 @@ impl BlockContext {
 pub struct OptionBlockContext<'a>(&'a Option<BlockContext>);
 
 impl<'a> OptionBlockContext<'a> {
-    pub fn enclosing_scope_clone(&self) -> Option<SharedScope> {
+    pub fn enclosing_scope_clone(&self) -> Option<Weaked<Scope>> {
         match self.0 {
-            Some(c) => match &c.enclosing_scope {
-                Some(scope) => Some(scope.clone()),
-                None => None,
-            },
+            Some(bc) => bc.enclosing_scope.as_ref().map(|s| s.weak()),
             None => None,
         }
     }
@@ -250,10 +313,22 @@ impl<'a> OptionBlockContext<'a> {
     }
 }
 
-#[derive(Debug, Clone)]
+// #[derive(Educe, Clone)]
+// #[educe(Debug)]
+#[derive(Clone, Default)]
 pub struct VariantDef {
     pub name: String,
+    // #[educe(Debug(ignore))]
     pub data_type: DataType,
+}
+
+impl fmt::Debug for VariantDef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("VariantDef")
+            .field("name", &self.name)
+            .field("data_type", &self.data_type.to_string())
+            .finish()
+    }
 }
 
 impl VariantDef {
@@ -272,9 +347,23 @@ impl Unique for VariantDef {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum FuncNameType {
+    Named(String),
+    Anonymous(String),
+}
+
+impl ToString for FuncNameType {
+    fn to_string(&self) -> String {
+        match self {
+            FuncNameType::Named(n) | FuncNameType::Anonymous(n) => n.to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct FunctionDef {
-    pub func_name: String,
+    pub func_name: FuncNameType,
     pub variant_defs: Vec<VariantDef>,
     pub body: SharedAstNode,
     pub return_data_type: DataType,
@@ -284,7 +373,26 @@ pub struct FunctionDef {
 impl FunctionDef {
     pub fn build_format(&self, level: usize, s: &mut String) {
         s.push_str("func ");
-        s.push_str(&self.func_name);
+        s.push_str(&format!("{:?}", self.func_name));
+    }
+}
+
+impl PartialEq for FunctionDef {
+    fn eq(&self, other: &Self) -> bool {
+        self.func_name.eq(&other.func_name)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct MethodDef {
+    pub method_type: MethodType,
+    pub function_def: FunctionDef,
+}
+
+impl MethodDef {
+    pub fn build_format(&self, level: usize, s: &mut String) {
+        s.push_str("func ");
+        s.push_str(&format!("{:?}", self.function_def.func_name));
     }
 }
 
@@ -302,14 +410,27 @@ impl ImplStatement {
     }
 }
 
-#[derive(Educe, Clone)]
+#[derive(Debug, Clone)]
+pub enum MethodType {
+    Static,
+    Member,
+}
+
+#[derive(Educe, Clone, Default)]
 #[educe(Debug)]
 pub struct StructDef {
     pub struct_name: String,
     pub member_variants: Vec<VariantDef>,
-    pub function_defines: HashMap<String, FunctionDef>,
+    pub member_method_defines: HashMap<String, FunctionDef>,
+    pub static_method_defines: HashMap<String, FunctionDef>,
     #[educe(Debug(ignore))]
     pub context: Option<BlockContext>,
+}
+
+impl PartialEq for StructDef {
+    fn eq(&self, other: &Self) -> bool {
+        self.struct_name.eq(&other.struct_name)
+    }
 }
 
 impl Unique for StructDef {
@@ -335,6 +456,16 @@ impl StructDef {
     }
 }
 
+pub struct SharedStructDef(Rc<RefCell<StructDef>>);
+
+impl std::ops::Deref for SharedStructDef {
+    type Target = RefCell<StructDef>;
+
+    fn deref(&self) -> &Self::Target {
+        self.0.deref()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum BuiltInFunc {
     Println,
@@ -342,7 +473,7 @@ pub enum BuiltInFunc {
 }
 
 #[derive(Debug)]
-pub enum FuncType {
+pub enum FuncClassify {
     BuiltIn(BuiltInFunc),
     Custom,
 }
@@ -350,14 +481,18 @@ pub enum FuncType {
 #[derive(Educe)]
 #[educe(Debug)]
 pub struct FuncCall {
-    pub func_type: FuncType,
+    pub func_type: FuncClassify,
     pub func_name: String,
-    pub params: Vec<SharedAstNode>,
+    pub params: Vec<SharedExpr>,
     #[educe(Debug(ignore))]
-    pub enclosing_scope: Option<SharedScope>,
+    pub enclosing_scope: Option<Shared<Scope>>,
 }
 
 impl FuncCall {
+    pub fn push_param(&mut self, expr: SharedExpr) {
+        self.params.push(expr);
+    }
+
     pub fn build_format(&self, level: usize, s: &mut String) {
         s.push_str(&format!("call function: {}", self.func_name));
     }
@@ -369,7 +504,7 @@ pub struct PeriodAccess {
     pub first_expr: SharedExpr,
     pub exprs: Vec<SharedExpr>,
     #[educe(Debug(ignore))]
-    pub enclosing_scope: Option<SharedScope>,
+    pub enclosing_scope: Option<Shared<Scope>>,
 }
 
 impl PeriodAccess {
@@ -428,11 +563,11 @@ impl ContinueStatement {
 #[educe(Debug)]
 pub struct IfContext {
     #[educe(Debug(ignore))]
-    pub enclosing_scope: SharedScope,
+    pub enclosing_scope: Shared<Scope>,
 }
 
 impl IfContext {
-    pub fn new(scope: SharedScope) -> Self {
+    pub fn new(scope: Shared<Scope>) -> Self {
         Self {
             enclosing_scope: scope,
         }
@@ -443,11 +578,11 @@ impl IfContext {
 #[educe(Debug)]
 pub struct WhileContext {
     #[educe(Debug(ignore))]
-    pub enclosing_scope: SharedScope,
+    pub enclosing_scope: Shared<Scope>,
 }
 
 impl WhileContext {
-    pub fn new(scope: SharedScope) -> Self {
+    pub fn new(scope: Shared<Scope>) -> Self {
         Self {
             enclosing_scope: scope,
         }
@@ -490,7 +625,7 @@ impl WhileStatement {
 #[educe(Debug)]
 pub struct StructInitContext {
     #[educe(Debug(ignore))]
-    pub enclosing_scope: SharedScope,
+    pub enclosing_scope: Shared<Scope>,
 }
 
 #[derive(Debug, derive_new::new)]
@@ -622,10 +757,23 @@ impl ExprNode {
     }
 }
 
-#[derive(Debug)]
 pub struct Expr {
     pub data_type: DataType,
     pub expr_node: ExprNode,
+}
+
+impl fmt::Debug for Expr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Expr")
+            .field("data_type", &self.data_type.to_string())
+            .field("expr_node", &self.expr_node)
+            .finish()
+        // f.write_fmt(format_args!(
+        //     "Expr {{\n\tdata_type: {}\n\texpr_node: {:#?}\n}}",
+        //     &self.data_type.to_string(),
+        //     self.expr_node
+        // ))
+    }
 }
 
 impl Expr {
@@ -633,9 +781,16 @@ impl Expr {
         self.expr_node.build_format(level, s);
     }
 
+    pub fn new_with_name_data_type(name: impl Into<String>, expr_node: ExprNode) -> Self {
+        Self {
+            data_type: DataType::Unknown(name.into()),
+            expr_node: expr_node,
+        }
+    }
+
     pub fn new_without_data_type(expr_node: ExprNode) -> Self {
         Self {
-            data_type: DataType::Unknown("unknown".into()),
+            data_type: DataType::default(),
             expr_node: expr_node,
         }
     }
@@ -650,11 +805,12 @@ impl SharedExpr {
         Self(Rc::new(RefCell::new(expr)))
     }
 
+    pub fn new_with_name_data_type(name: impl Into<String>, expr_node: ExprNode) -> Self {
+        SharedExpr::new(Expr::new_with_name_data_type(name, expr_node))
+    }
+
     pub fn new_without_data_type(expr_node: ExprNode) -> Self {
-        SharedExpr::new(Expr {
-            data_type: DataType::Unknown("unknown".into()),
-            expr_node: expr_node,
-        })
+        SharedExpr::new(Expr::new_without_data_type(expr_node))
     }
 
     pub fn as_ref(&self) -> &Rc<RefCell<Expr>> {
@@ -688,11 +844,11 @@ pub struct CustomTypeObjectDeclaration {
 #[educe(Debug)]
 pub struct CustomTypeObjectDeclarationContext {
     #[educe(Debug(ignore))]
-    pub enclosing_scope: SharedScope,
+    pub enclosing_scope: Shared<Scope>,
 }
 
 impl CustomTypeObjectDeclarationContext {
-    pub fn new(scope: SharedScope) -> Self {
+    pub fn new(scope: Shared<Scope>) -> Self {
         Self {
             enclosing_scope: scope,
         }
@@ -711,6 +867,7 @@ pub enum AstNode {
     CustomTypeObjectDeclaration(CustomTypeObjectDeclaration),
     VariantDef(VariantDef),
     FunctionDef(FunctionDef),
+    MethodDef(MethodDef),
     MainBlock {
         nodes: Vec<SharedAstNode>,
         context: Option<BlockContext>,
@@ -771,6 +928,9 @@ impl AstNode {
                 def.build_format(level + 1, s);
             }
             FunctionDef(def) => {
+                def.build_format(level + 1, s);
+            }
+            MethodDef(def) => {
                 def.build_format(level + 1, s);
             }
             StructDef(def) => {

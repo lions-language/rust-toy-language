@@ -1,3 +1,3 @@
 mod cell;
 
-pub use cell::SharedCell;
+pub use cell::{Shared, SharedCell, Weaked};

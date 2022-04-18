@@ -73,6 +73,7 @@ pub enum Keyword {
     Int,
     Long,
     Return,
+    SelfHim,
     String,
     Struct,
     True,
@@ -114,6 +115,7 @@ pub const KEYWORD_INDEX: &[Keyword] = &[
     Keyword::Int,
     Keyword::Long,
     Keyword::Return,
+    Keyword::SelfHim,
     Keyword::String,
     Keyword::Struct,
     Keyword::True,
@@ -122,5 +124,5 @@ pub const KEYWORD_INDEX: &[Keyword] = &[
 
 pub const KEYWORDS: &[&'static str] = &[
     "break", "continue", "double", "else", "false", "for", "func", "if", "impl", "in", "int",
-    "long", "return", "string", "struct", "true", "while",
+    "long", "return", "self", "string", "struct", "true", "while",
 ];

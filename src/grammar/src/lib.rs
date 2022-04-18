@@ -10,9 +10,9 @@ pub(crate) use lexical::{FromString, Keyword, LexicalParser, Token, TokenReader,
 
 pub use parser::{
     ArrayFinder, AstNode, BlockContext, BreakContext, BuiltInFunc, ContinueContext,
-    CustomTypeObjectDeclarationContext, DataType, ExprNode, FuncCall, FuncType, FunctionDef, Ident,
-    IfContext, IfStatement, ImplStatement, IntdeclarationContext, OptionBlockContext, PeriodAccess,
-    ReturnContext, Scope, ScopeType, SharedAstNode, SharedExpr, SharedScope,
-    SharedScopeOptionShower, StructDef, StructInit, Symbol, SymbolObject, TimeUnit, Value,
-    WhileContext, WhileStatement,
+    CustomTypeObjectDeclarationContext, DataType, ExprNode, FuncCall, FuncClassify, FunctionDef,
+    Ident, IfContext, IfStatement, ImplStatement, IntdeclarationContext, MethodDef, MethodType,
+    OptionBlockContext, PeriodAccess, ReturnContext, Scope, ScopeType, SharedAstNode, SharedExpr,
+    SharedScope, SharedScopeOptionShower, StructDef, StructInit, Symbol, SymbolObject, TimeUnit,
+    Value, WhileContext, WhileStatement,
 };

@@ -1,9 +1,9 @@
 use super::{
     AstNode, BreakStatement, BuiltInFunc, ConditionBlock, ContinueStatement,
-    CustomTypeObjectDeclaration, DataType, Expr, ExprNode, FuncCall, FuncType, FunctionDef, Ident,
-    IfStatement, ImplStatement, PeriodAccess, ReturnStatement, SharedAstNode, SharedCell,
-    SharedExpr, StructDef, StructFieldInit, StructInit, TimeUnit, Value, VariantDef,
-    WhileStatement,
+    CustomTypeObjectDeclaration, DataType, Expr, ExprNode, FuncCall, FuncClassify, FuncNameType,
+    FunctionDef, FunctionType, Ident, IfStatement, ImplStatement, MethodDef, MethodType,
+    PeriodAccess, ReturnStatement, SharedAstNode, SharedCell, SharedExpr, StructDef,
+    StructFieldInit, StructInit, TimeUnit, Value, VariantDef, WhileStatement,
 };
 use crate::*;
 use std::cell::RefCell;
@@ -105,7 +105,7 @@ impl Parser {
             Token::Word(Word {
                 keyword: Keyword::Func,
                 ..
-            }) => self.function_define(),
+            }) => self.parse_func(),
             Token::Word(Word {
                 keyword: Keyword::Struct,
                 ..
@@ -156,11 +156,11 @@ impl Parser {
         }
     }
 
-    fn get_func_type(&self, func_name: &str) -> GrammarResult<FuncType> {
+    fn get_func_type(&self, func_name: &str) -> GrammarResult<FuncClassify> {
         match func_name {
-            "println" => Ok(FuncType::BuiltIn(BuiltInFunc::Println)),
-            "sleep" => Ok(FuncType::BuiltIn(BuiltInFunc::Sleep)),
-            _ => Ok(FuncType::Custom),
+            "println" => Ok(FuncClassify::BuiltIn(BuiltInFunc::Println)),
+            "sleep" => Ok(FuncClassify::BuiltIn(BuiltInFunc::Sleep)),
+            _ => Ok(FuncClassify::Custom),
         }
     }
 
@@ -211,7 +211,7 @@ impl Parser {
         // consume `(`
         self.token_reader.consume();
 
-        let mut params: Vec<SharedAstNode> = Vec::new();
+        let mut params: Vec<SharedExpr> = Vec::new();
 
         let func_type = self.get_func_type(&func_name)?;
 
@@ -231,7 +231,7 @@ impl Parser {
                     continue;
                 }
                 _ => {
-                    params.push(self.statement_parse()?);
+                    params.push(self.parse_expr()?);
                 }
             }
         }
@@ -275,13 +275,14 @@ impl Parser {
             }
         }
 
-        Ok(SharedExpr::new_without_data_type(ExprNode::StructInit(
-            StructInit {
+        Ok(SharedExpr::new_with_name_data_type(
+            ident.value.clone(),
+            ExprNode::StructInit(StructInit {
                 ident: ident,
                 field_initlist: field_initlist,
                 context: None,
-            },
-        )))
+            }),
+        ))
     }
 
     fn parse_struct_field_init(&mut self) -> GrammarResult<StructFieldInit> {
@@ -327,29 +328,76 @@ impl Parser {
         }
     }
 
+    pub fn parse_func_type(&mut self) -> GrammarResult<DataType> {
+        // consume `func`
+        self.token_reader.consume();
+
+        match self.token_reader.peek() {
+            Token::LParen => {
+                // params
+                self.expect_token(&Token::LParen)?;
+                let param_data_types =
+                    self.parse_function_param_list(|data_type, _| Box::new(data_type))?;
+                self.expect_token(&Token::RParen)?;
+
+                // return
+                let return_data_type = self.parse_function_return_type()?;
+
+                Ok(DataType::Function(FunctionType {
+                    param_data_types: param_data_types,
+                    return_data_type: Box::new(return_data_type),
+                    func_define: None,
+                }))
+            }
+            other => Err(format!("expected: ident / lparen, but found: {:?}", other)),
+        }
+    }
+
     fn parse_type(&mut self) -> GrammarResult<DataType> {
         match self.token_reader.peek() {
             Token::Word(Word {
                 keyword: Keyword::Int,
                 ..
-            }) => Ok(DataType::Int),
+            }) => {
+                self.token_reader.consume();
+                Ok(DataType::Int)
+            }
             Token::Word(Word {
                 keyword: Keyword::Double,
                 ..
-            }) => Ok(DataType::Double),
+            }) => {
+                self.token_reader.consume();
+                Ok(DataType::Double)
+            }
             Token::Word(Word {
                 keyword: Keyword::Long,
                 ..
-            }) => Ok(DataType::Long),
+            }) => {
+                self.token_reader.consume();
+                Ok(DataType::Long)
+            }
             Token::Word(Word {
                 keyword: Keyword::String,
                 ..
-            }) => Ok(DataType::String),
-            Token::StringLiteral(_) => Ok(DataType::String),
+            }) => {
+                self.token_reader.consume();
+                Ok(DataType::String)
+            }
+            Token::StringLiteral(_) => {
+                self.token_reader.consume();
+                Ok(DataType::String)
+            }
+            Token::Word(Word {
+                keyword: Keyword::Func,
+                ..
+            }) => self.parse_func_type(),
             Token::Word(Word {
                 keyword: Keyword::NoKeyword,
                 value,
-            }) => Ok(DataType::Unknown(value)),
+            }) => {
+                self.token_reader.consume();
+                Ok(DataType::Unknown(value))
+            }
             _ => Err(format!(
                 "unresolvable type = {:?}",
                 self.token_reader.peek()
@@ -386,27 +434,234 @@ impl Parser {
         Ok(Ident { value: nokeyword })
     }
 
-    fn parse_function_param(&mut self) -> GrammarResult<VariantDef> {
+    fn parse_function_param<R, F>(&mut self, f: &F) -> GrammarResult<R>
+    where
+        F: Fn(DataType, Option<Ident>) -> R,
+    {
         let data_type = self.parse_type()?;
-        self.token_reader.consume();
 
-        let ident = self.parse_ident()?;
+        let mut ident = None;
+        match self.token_reader.peek() {
+            Token::Word(Word {
+                keyword: Keyword::NoKeyword,
+                ..
+            }) => {
+                ident = Some(self.parse_ident()?);
+            }
+            _ => {}
+        }
 
-        Ok(VariantDef {
-            name: ident.value,
+        Ok(f(data_type, ident))
+    }
+
+    fn parse_function_param_variant(&mut self) -> GrammarResult<VariantDef> {
+        self.parse_function_param(&|data_type, ident: Option<Ident>| VariantDef {
             data_type: data_type,
+            name: ident.unwrap().value,
         })
     }
 
-    fn parse_function_param_list(&mut self) -> GrammarResult<Vec<VariantDef>> {
+    fn parse_function_param_list_variant(&mut self) -> GrammarResult<Vec<VariantDef>> {
+        self.parse_function_param_list(|data_type, ident| VariantDef {
+            data_type: data_type,
+            name: ident.unwrap().value,
+        })
+    }
+
+    fn parse_function_param_list<F, R>(&mut self, f: F) -> GrammarResult<Vec<R>>
+    where
+        F: Fn(DataType, Option<Ident>) -> R,
+    {
         if self.expected(&Token::RParen) {
             // ) => end
             return Ok(Vec::new());
         }
 
-        let mut variant_defs = Vec::new();
+        let mut rs = Vec::new();
         loop {
-            let variant_def = self.parse_function_param()?;
+            let r = self.parse_function_param(&f)?;
+            rs.push(r);
+
+            if self.expected(&Token::RParen) {
+                break;
+            }
+
+            if self.expected(&Token::Comma) {
+                self.token_reader.consume();
+            } else {
+                return Err(format!(
+                    "expected: comma / rparen, but found: {:?}",
+                    self.token_reader.peek()
+                ));
+            }
+        }
+
+        Ok(rs)
+    }
+
+    fn parse_function_return_type(&mut self) -> GrammarResult<DataType> {
+        if !self.expected(&Token::Arrow) {
+            return Ok(DataType::Unit);
+        }
+
+        self.token_reader.consume();
+        let t = self.parse_type()?;
+
+        Ok(t)
+    }
+
+    fn parse_function_name(&mut self) -> GrammarResult<String> {
+        if let Token::Word(Word {
+            keyword: Keyword::NoKeyword,
+            value,
+        }) = self.token_reader.peek()
+        {
+            self.token_reader.consume();
+            Ok(value)
+        } else {
+            Err(format!(
+                "the func keyword should be followed by an identify"
+            ))
+        }
+    }
+
+    pub fn parse_func(&mut self) -> GrammarResult<SharedAstNode> {
+        // consume `func`
+        self.token_reader.consume();
+
+        match self.token_reader.peek() {
+            Token::Word(Word {
+                keyword: Keyword::NoKeyword,
+                value,
+            }) => self.named_function_define(),
+            Token::LParen => self.parse_func_lparen(),
+            other => Err(format!("expected: ident / lparen, but found: {:?}", other)),
+        }
+    }
+
+    pub fn parse_func_lparen(&mut self) -> GrammarResult<SharedAstNode> {
+        // params
+        self.expect_token(&Token::LParen)?;
+        let variant_defs = self.parse_function_param_list_variant()?;
+        self.expect_token(&Token::RParen)?;
+
+        // return
+        let return_data_type = self.parse_function_return_type()?;
+
+        match self.token_reader.peek() {
+            Token::LBrace => self.anonymous_function_define(variant_defs, return_data_type),
+            _ => self.parse_func_type_declare(variant_defs, return_data_type),
+        }
+    }
+
+    pub fn parse_func_type_declare(
+        &mut self,
+        variant_defs: Vec<VariantDef>,
+        return_data_type: DataType,
+    ) -> GrammarResult<SharedAstNode> {
+        todo!();
+    }
+
+    pub fn named_function_define(&mut self) -> GrammarResult<SharedAstNode> {
+        let func_name = self.parse_function_name()?;
+        self.function_define(FuncNameType::Named(func_name))
+    }
+
+    pub fn anonymous_function_define(
+        &mut self,
+        variant_defs: Vec<VariantDef>,
+        return_data_type: DataType,
+    ) -> GrammarResult<SharedAstNode> {
+        // body
+        let body = self.func_block()?;
+
+        Ok(self.build_function_def_ast_node(
+            FuncNameType::Anonymous(Default::default()),
+            variant_defs,
+            return_data_type,
+            body,
+        ))
+    }
+
+    #[inline]
+    fn build_function_def_ast_node(
+        &self,
+        func_name: FuncNameType,
+        variant_defs: Vec<VariantDef>,
+        return_data_type: DataType,
+        body: SharedAstNode,
+    ) -> SharedAstNode {
+        SharedAstNode::new(AstNode::FunctionDef(FunctionDef {
+            func_name: func_name,
+            variant_defs: variant_defs,
+            body: body,
+            return_data_type: return_data_type,
+            context: None,
+        }))
+    }
+
+    pub fn function_define(&mut self, func_name: FuncNameType) -> GrammarResult<SharedAstNode> {
+        // params
+        self.expect_token(&Token::LParen)?;
+        let variant_defs = self.parse_function_param_list_variant()?;
+        self.expect_token(&Token::RParen)?;
+
+        // return
+        let return_data_type = self.parse_function_return_type()?;
+
+        // body
+        self.expect_token_unconsume(&Token::LBrace)?;
+        let body = self.func_block()?;
+
+        Ok(self.build_function_def_ast_node(func_name, variant_defs, return_data_type, body))
+    }
+
+    fn parse_method_param_list(
+        &mut self,
+        data_type: &DataType,
+    ) -> GrammarResult<(MethodType, Vec<VariantDef>)> {
+        if self.expected(&Token::RParen) {
+            // ) => end
+            return Ok((MethodType::Static, Vec::new()));
+        }
+
+        let method_type = match self.token_reader.peek() {
+            Token::Word(Word {
+                keyword: Keyword::SelfHim,
+                ..
+            }) => {
+                self.token_reader.consume();
+
+                MethodType::Member
+            }
+            _ => MethodType::Static,
+        };
+
+        let mut variant_defs = Vec::new();
+
+        if let MethodType::Member = method_type {
+            variant_defs.push(VariantDef {
+                name: "self".into(),
+                data_type: data_type.clone(),
+            });
+
+            if self.expected(&Token::RParen) {
+                // ) => end
+                return Ok((method_type, variant_defs));
+            }
+
+            if self.expected(&Token::Comma) {
+                self.token_reader.consume();
+            } else {
+                return Err(format!(
+                    "expected: comma / rparen, but found: {:?}",
+                    self.token_reader.peek()
+                ));
+            }
+        };
+
+        loop {
+            let variant_def = self.parse_function_param_variant()?;
             variant_defs.push(variant_def);
 
             if self.expected(&Token::RParen) {
@@ -423,40 +678,17 @@ impl Parser {
             }
         }
 
-        Ok(variant_defs)
+        Ok((method_type, variant_defs))
     }
 
-    pub fn parse_function_return_type(&mut self) -> GrammarResult<DataType> {
-        if !self.expected(&Token::Arrow) {
-            return Ok(DataType::Unit);
-        }
-
-        self.token_reader.consume();
-        let t = self.parse_type()?;
+    pub fn method_define(&mut self, data_type: &DataType) -> GrammarResult<SharedAstNode> {
         self.token_reader.consume();
 
-        Ok(t)
-    }
-
-    pub fn function_define(&mut self) -> GrammarResult<SharedAstNode> {
-        self.token_reader.consume();
-
-        let func_name = if let Token::Word(Word {
-            keyword: Keyword::NoKeyword,
-            value,
-        }) = self.token_reader.peek()
-        {
-            self.token_reader.consume();
-            value
-        } else {
-            return Err(format!(
-                "the func keyword should be followed by an identify"
-            ));
-        };
+        let func_name = self.parse_function_name()?;
 
         // params
         self.expect_token(&Token::LParen)?;
-        let variant_defs = self.parse_function_param_list()?;
+        let (method_type, variant_defs) = self.parse_method_param_list(data_type)?;
         self.expect_token(&Token::RParen)?;
 
         // return
@@ -466,12 +698,15 @@ impl Parser {
         self.expect_token_unconsume(&Token::LBrace)?;
         let body = self.func_block()?;
 
-        Ok(SharedAstNode::new(AstNode::FunctionDef(FunctionDef {
-            func_name: func_name,
-            variant_defs: variant_defs,
-            body: body,
-            return_data_type: return_data_type,
-            context: None,
+        Ok(SharedAstNode::new(AstNode::MethodDef(MethodDef {
+            method_type: method_type,
+            function_def: FunctionDef {
+                func_name: FuncNameType::Named(func_name),
+                variant_defs: variant_defs,
+                body: body,
+                return_data_type: return_data_type,
+                context: None,
+            },
         })))
     }
 
@@ -481,9 +716,11 @@ impl Parser {
 
         let name = self.parse_ident()?;
 
+        let data_type = DataType::Unknown(name.to_string());
+
         self.expect_token_unconsume(&Token::LBrace)?;
 
-        let nodes = self.parse_block()?;
+        let nodes = self.parse_impl_block(&data_type)?;
 
         Ok(SharedAstNode::new(AstNode::ImplStatement(ImplStatement {
             name: name,
@@ -517,7 +754,8 @@ impl Parser {
         Ok(SharedAstNode::new(AstNode::StructDef(StructDef {
             struct_name: struct_name,
             member_variants: member_variants,
-            function_defines: std::collections::HashMap::new(),
+            member_method_defines: std::collections::HashMap::new(),
+            static_method_defines: std::collections::HashMap::new(),
             context: None,
         })))
     }
@@ -528,7 +766,6 @@ impl Parser {
         self.expect_token(&Token::Colon)?;
 
         let data_type = self.parse_type()?;
-        self.token_reader.consume();
 
         Ok(VariantDef {
             name: ident.value,
@@ -701,6 +938,48 @@ impl Parser {
         }))
     }
 
+    pub fn statement_in_impl_parse(
+        &mut self,
+        data_type: &DataType,
+    ) -> GrammarResult<SharedAstNode> {
+        match self.token_reader.peek() {
+            Token::Word(Word {
+                keyword: Keyword::Func,
+                ..
+            }) => self.method_define(data_type),
+            Token::EOF => {
+                panic!("expect a statement, but an EOF is reached, the EOF should be checked externally");
+            }
+            other => panic!("in impl, the use of {:?} is not allowed.", other),
+        }
+    }
+
+    pub fn parse_impl_block(&mut self, data_type: &DataType) -> GrammarResult<Vec<SharedAstNode>> {
+        // consume `{`
+        self.token_reader.consume();
+
+        let mut nodes = Vec::<SharedAstNode>::new();
+
+        loop {
+            match self.token_reader.peek() {
+                Token::RBrace => {
+                    self.token_reader.consume();
+                    break;
+                }
+                Token::EOF => {
+                    return Err(format!(
+                        "expect right curly brackets or other expressions, but arrive at EOF"
+                    ));
+                }
+                _ => {
+                    nodes.push(self.statement_in_impl_parse(&data_type)?);
+                }
+            }
+        }
+
+        Ok(nodes)
+    }
+
     pub fn parse_block(&mut self) -> GrammarResult<Vec<SharedAstNode>> {
         // consume `{`
         self.token_reader.consume();
@@ -847,6 +1126,10 @@ impl Parser {
             Token::Word(Word {
                 keyword: Keyword::NoKeyword,
                 value,
+            })
+            | Token::Word(Word {
+                keyword: Keyword::SelfHim,
+                value,
             }) => {
                 self.token_reader.consume();
                 Ok(SharedExpr::new_without_data_type(ExprNode::Identifier(
@@ -930,8 +1213,8 @@ mod test {
     use super::*;
     use crate::FromString;
 
-    fn test_string_parser(s: impl ToString) {
-        let mut parser = FromString::new(s.to_string());
+    fn test_string_parser(s: impl Into<String>) {
+        let mut parser = FromString::new(s.into());
         let tokens = parser.parse().unwrap();
         println!("{:#?}", tokens);
         let token_reader = TokenReader::new(tokens);
@@ -1127,7 +1410,7 @@ mod test {
             Master m = Master {
                 dog: Dog {
                     name: "Mr huang",
-                    age: 5
+                    age: 5,
                 },
                 cat: c,
             }
@@ -1135,9 +1418,8 @@ mod test {
         );
     }
 
-    #[test]
-    fn simple_parser_impl_statement() {
-        test_string_parser(
+    fn build_test_struct_v1(s: Option<&str>) -> String {
+        let mut out = String::from(
             r#"
             struct Dog {
                 name: string,
@@ -1145,11 +1427,66 @@ mod test {
             }
 
             impl Dog {
-                func say() {
-                    println("wang wang")
+                func say_name(self) {
+                    println(self.name)
+                }
+
+                func type() {
+                    println("dog")
                 }
             }
+
             "#,
+        );
+
+        if let Some(v) = s {
+            out.push_str(v);
+        };
+
+        out
+    }
+
+    #[test]
+    fn simple_parser_impl_statement() {
+        test_string_parser(build_test_struct_v1(None));
+    }
+
+    #[test]
+    fn simple_parser_struct_member_function_call() {
+        test_string_parser(build_test_struct_v1(Some(
+            r#"
+            Dog d = Dog {
+                name: "Mr huang",
+                age: 5
+            }
+
+            d.say_name();
+            "#,
+        )));
+    }
+
+    #[test]
+    fn simple_parser_anonymous_function_define() {
+        test_string_parser(
+            r#"
+            func a() {
+                func() {
+                }
+            }
+        "#,
+        );
+    }
+
+    #[test]
+    fn simple_parser_function_type_define() {
+        test_string_parser(
+            r#"
+            func a(func(int a, int b) -> int f) {
+            }
+
+            func b(func(int, int) -> int f) {
+            }
+        "#,
         );
     }
 }

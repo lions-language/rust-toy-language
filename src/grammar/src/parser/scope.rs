@@ -5,9 +5,10 @@ use std::rc::Rc;
 use std::fmt;
 
 use super::ext::*;
-use super::{SharedCell, Symbol};
+use super::{Shared, SharedCell, Symbol};
+use utils::Weaked;
 
-pub struct SharedScopeOptionShower<'a>(&'a Option<SharedScope>);
+pub struct SharedScopeOptionShower<'a>(&'a Option<Shared<Scope>>);
 
 impl<'a> SharedScopeOptionShower<'a> {
     pub fn show_scope_type(&self) {
@@ -21,7 +22,7 @@ impl<'a> SharedScopeOptionShower<'a> {
         }
     }
 
-    pub fn new(ss: &'a Option<SharedScope>) -> Self {
+    pub fn new(ss: &'a Option<Shared<Scope>>) -> Self {
         Self(ss)
     }
 }
@@ -62,7 +63,7 @@ pub enum ScopeType {
 #[derive(Debug)]
 pub struct Scope {
     symbols: Vec<Symbol>,
-    enclosing_scope: Option<SharedScope>,
+    enclosing_scope: Option<Weaked<Scope>>,
     scope_type: ScopeType,
 }
 
@@ -75,21 +76,25 @@ impl Scope {
         self.symbols.push(symbol);
     }
 
-    pub fn enclosing_scope_equal(&self, other: &Option<SharedScope>) -> bool {
+    pub fn enclosing_scope_equal(&self, other: &Option<Weaked<Scope>>) -> bool {
         self.enclosing_scope.as_ref().map_or_else(
             || if other.is_none() { true } else { false },
             |v| {
                 if other.is_none() {
                     false
                 } else {
-                    self.enclosing_scope.as_ref().unwrap().as_ptr()
-                        == other.as_ref().unwrap().as_ptr()
+                    // self.enclosing_scope.as_ref().unwrap().as_ptr()
+                    //     == other.as_ref().unwrap().as_ptr()
+                    std::ptr::eq(
+                        self.enclosing_scope.as_ref().unwrap(),
+                        other.as_ref().unwrap(),
+                    )
                 }
             },
         )
     }
 
-    pub fn enclosing_scope(&self) -> &Option<SharedScope> {
+    pub fn enclosing_scope(&self) -> &Option<Weaked<Scope>> {
         &self.enclosing_scope
     }
 
@@ -115,7 +120,7 @@ impl Scope {
         self.symbols.find_clone(name)
     }
 
-    pub fn new(enclosing_scope: Option<SharedScope>, scope_type: ScopeType) -> Self {
+    pub fn new(enclosing_scope: Option<Weaked<Scope>>, scope_type: ScopeType) -> Self {
         Self {
             symbols: Vec::new(),
             enclosing_scope: enclosing_scope,

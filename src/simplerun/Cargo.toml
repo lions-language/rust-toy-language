@@ -1,20 +1,15 @@
 [package]
-name = "grammar"
+name = "simplerun"
 version = "0.1.0"
-edition = "2018"
+edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
-[features]
-std = []
-debug = []
-default = ["std"]
-
 [dependencies]
-lexical = { path = "../lexical" }
 utils = { path = "../utils" }
-matches = { version = "0.1" }
+lexical = { path = "../lexical" }
+grammar = { path = "../grammar" }
+semantic = { path = "../semantic" }
+
 educe = { version = "0.4" }
 derive-new = { version = "0.5.9" }
-try_match = "0.3"
-# log = "0.4"
